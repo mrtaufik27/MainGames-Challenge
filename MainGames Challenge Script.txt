@@ -1,0 +1,154 @@
+# MAINGAMES CHALLENGE
+library(writexl)
+library(vtable)
+library(ggplot2); library(ggcorrplot); library(corrgram) # correlation
+library(rpart); library(rpart.plot) # decision tree
+library(caTools) # data splitting
+library(MASS)
+library(caret) # machine learning algorithm
+library(leaps) # leaps for LM
+library(gbm) # boosting
+
+setwd("C:/Users/USER/Google Drive/04. Lain-lain/maingame/DS_test")
+
+df <- read.csv("Maingames_DS_dataset.csv")
+str(df)
+
+df$Gender <- ifelse(df$Gender=="" | df$Gender=="-", NA, df$Gender)
+df$Game <- ifelse(df$Game=="" | df$Game=="-", NA, df$Game)
+
+
+df$Country <- as.factor(df$Country)
+df$Gender <- as.factor(df$Gender)
+df$Game <- as.factor(df$Game)
+df$Total.Follower <- as.numeric(df$Total.Follower)
+df$MBTI_grouped <- as.factor(df$MBTI_grouped)
+
+
+summary(df)
+
+# Look at the data
+
+tab <- sumtable(df,
+         summ=c('notNA(x)',
+                'mean(x)',
+                'median(x)',
+                'propNA(x)'),out="return")
+tab
+View(tab)
+View(df)
+
+#write_xlsx(tab, "descriptive.xlsx")
+
+# identify correlation among variables
+
+#model.matrix(~0+., data=df) %>% 
+#  cor(use="pairwise.complete.obs") %>% 
+#  ggcorrplot(show.diag = F, type="lower", lab=F, lab_size=2)
+
+
+#corrgram(df, lower.panel=panel.shade, upper.panel=panel.cor)
+
+# MACHINE LEARNING APPROACH
+set.seed(123)
+
+# SPLIT DATASET
+names(df)
+sampleSplit <- sample.split(Y=df$PaidStarPerWatchedHour, SplitRatio=0.7)
+trainSet <- subset(x=df[,-1], sampleSplit==TRUE)
+testSet <- subset(x=df[,-1], sampleSplit==FALSE)
+
+
+###########
+# LINEAR MODEL
+lm.mod <- lm(PaidStarPerWatchedHour ~ ., data=trainSet)
+plot(lm.mod)
+summary(lm.mod)
+
+step.model <- stepAIC(lm.mod, direction = "both", trace = FALSE)
+summary(step.model)
+
+# best fitted linear model
+
+#best.lm.mod <- regsubsets(PaidStarPerWatchedHour~.,
+#             data =trainSet, really.big = T,
+#             nbest = 1, nvmax = NULL, force.in = NULL, force.out = NULL,
+#             method = "exhaustive")
+#summary.best.lm.mod <- summary(best.lm.mod)
+#as.data.frame(summary_best_subset$outmat)
+
+#lm.full.model <- regsubsets(PaidStarPerWatchedHour~., data = trainSet, nvmax = 5,
+#                     method = "seqrep")
+#summary(models)
+
+# too many predictors, take forever computation, not a correct way to analyze
+# computer can calculate 100,000 models per second then it will only take 400+ years to complete (assuming that your computer does not start swapping memory to keep all the results, that really slows things down
+2^100/100000/60/60/24/365.24 LINEAR REGRESSION DOES NOT SEEM TO BE A GOOD MODEL FOR THIS DATASET
+############
+
+######### DECISION TREE
+# rpart
+mod <- rpart(PaidStarPerWatchedHour~.,trainSet)
+printcp(mod)
+plotcp(mod)
+plot(mod)
+plot(mod, uniform=T)
+text(mod,cex=1,digits=3,font=2)
+summary(mod)
+
+rpart.plot(mod)
+
+mod
+mod$variable.importance
+
+######
+
+######## random forest
+library(randomForest)
+set.seed(123)
+
+row.has.na <- apply(trainSet, 1, function(x){any(is.na(x))})
+trainSet_new <- trainSet[!row.has.na, ]
+str(trainSet_new)
+
+rf.model <- randomForest(PaidStarPerWatchedHour~.,trainSet_new,importance=TRUE) 
+rf.model # Can not handle categorical predictors with more than 53 categories.
+
+# exclude game 
+rf.model <- randomForest(PaidStarPerWatchedHour~.,trainSet_new[,-3],importance=TRUE) 
+rf.model
+
+importance(rf.model)
+varImpPlot(rf.model,pch=21,bg=4)
+mtext(line=1,adj=1,paste("Sample size: ",nrow(trainSet_new),sep=""))
+
+
+row.has.na <- apply(testSet, 1, function(x){any(is.na(x))})
+testSet_new <- testSet[!row.has.na, ]
+
+pred.rf = predict(rf.model,newdata=testSet_new[,-3])
+par(mar=c(1,1,1,1))
+plot(pred.rf, testSet_new$PaidStarPerWatchedHour)
+abline(0,1)
+mean((pred.rf-testSet_new$PaidStarPerWatchedHour)^2) #mse
+
+###########
+
+# BOOSTING
+set.seed(1)
+boost.model = gbm(PaidStarPerWatchedHour~.,data=trainSet_new,distribution="gaussian",n.trees=5000,interaction.depth=4)
+summary(boost.model)
+
+windows()
+par(mfrow=c(2,2))
+plot(boost.model,i="PaidStarPerWatchedHour.1")
+plot(boost.model,i="Self_Esteem_Cont_SELevelResponsibility")
+
+pred.boost=predict(boost.model,newdata=testSet,n.trees=5000)
+mean((pred.boost-testSet$PaidStarPerWatchedHour)^2,na.rm=T)
+
+###########
+########### Neural Network
+library(neuralnet)
+str(trainSet)
+nn <- neuralnet(PaidStarPerWatchedHour~.,data=trainSet[,-3],hidden=10, threshold=0.01)
